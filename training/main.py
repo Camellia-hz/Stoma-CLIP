@@ -7,6 +7,7 @@ import random
 from datetime import datetime
 
 import numpy as np
+import torch.nn as nn
 import torch
 from torch import optim
 from torch.cuda.amp import GradScaler
@@ -25,15 +26,18 @@ try:
     import horovod.torch as hvd
 except ImportError:
     hvd = None
-
+    
+import sys
+sys.path.append('.')
 from pmc_clip import create_model_and_transforms, trace_model, get_pretrained_url, download_pretrained
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, world_info_from_env
 from training.logger import setup_logging
 from training.params import parse_args
 from training.scheduler import cosine_lr, cosine_annealing_lr
-from training.train import train_one_epoch, train_one_epoch_mlm
+from training.train import train_one_epoch, train_one_epoch_mlm, train_one_epoch_cls
 from training.evaluate import evaluate
+from training.fusion_method import convert_model_to_cls
 
 # decorator to report error message in torch distributed mode
 if torch.__version__ >= '1.10':
@@ -71,7 +75,7 @@ def main():
 
     args.log_path = None
     if is_master(args, local=args.log_local):
-        log_base_path = os.path.join(args.logs, args.name)
+        log_base_path = os.path.join(args.log_dir, args.name)
         os.makedirs(log_base_path, exist_ok=True)
         log_filename = f'out-{args.rank}' if args.log_local else 'out.log'
         args.log_path = os.path.join(log_base_path, log_filename)
@@ -94,8 +98,8 @@ def main():
     args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
     args.tensorboard = 'tensorboard' in args.report_to or 'all' in args.report_to
     if is_master(args):
-        args.tensorboard_path = os.path.join(args.logs, args.name, "tensorboard") if args.tensorboard else ''
-        args.checkpoint_path = os.path.join(args.logs, args.name, "checkpoints")
+        args.tensorboard_path = os.path.join(args.log_dir, args.name, "tensorboard") if args.tensorboard else ''
+        args.checkpoint_path = os.path.join(args.log_dir, args.name, "checkpoints")
         for dirname in [args.tensorboard_path, args.checkpoint_path]:
             if dirname:
                 os.makedirs(dirname, exist_ok=True)
@@ -129,7 +133,11 @@ def main():
         force_quick_gelu=args.force_quick_gelu,
         pretrained_image=args.pretrained_image,
     )
-
+    
+    #####add cls head####
+    model = convert_model_to_cls(model, 11, args.fusion_method)
+    #####add cls head####
+    
     args.context_length = model.context_length
     random_seed(args.seed, args.rank)
 
@@ -149,7 +157,7 @@ def main():
         logging.info("Model:")
         logging.info(f"{str(model)}")
         logging.info("Params:")
-        params_file = os.path.join(args.logs, args.name, "params.txt")
+        params_file = os.path.join(args.log_dir, args.name, "params.txt")
         with open(params_file, "w") as f:
             for name in sorted(vars(args)):
                 val = getattr(args, name)
@@ -176,22 +184,44 @@ def main():
     if args.train_data:
         assert not args.trace, 'Cannot train with traced model'
 
-        exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
-        include = lambda n, p: not exclude(n, p)
+        # exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
+        # include = lambda n, p: not exclude(n, p)
 
-        named_parameters = list(model.named_parameters())
-        gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
-        rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
+        # named_parameters = list(model.named_parameters())
+        # gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
+        # rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
 
+        # optimizer = optim.AdamW(
+        #     [
+        #         {"params": gain_or_bias_params, "weight_decay": 0.},
+        #         {"params": rest_params, "weight_decay": args.wd},
+        #     ],
+        #     lr=args.lr,
+        #     betas=(args.beta1, args.beta2),
+        #     eps=args.eps,
+        # )
+        
+        # only train fusion and cls head
+        model_to_train = model.module if hasattr(model, 'module') else model
+
+        # 创建优化器
         optimizer = optim.AdamW(
             [
-                {"params": gain_or_bias_params, "weight_decay": 0.},
-                {"params": rest_params, "weight_decay": args.wd},
+                # 所有可训练参数中的权重参数（维度>=2）：应用权重衰减
+                {"params": [p for n, p in model_to_train.named_parameters() 
+                            if p.requires_grad and p.ndim >= 2], 
+                "weight_decay": args.wd},
+                
+                # 所有可训练参数中的偏置参数（维度<2）：不应用权重衰减
+                {"params": [p for n, p in model_to_train.named_parameters() 
+                            if p.requires_grad and p.ndim < 2], 
+                "weight_decay": 0.},
             ],
             lr=args.lr,
             betas=(args.beta1, args.beta2),
             eps=args.eps,
         )
+        
         if args.horovod:
             optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
@@ -203,14 +233,14 @@ def main():
     start_epoch = 0
     if args.resume is not None:
         if os.path.isfile(args.resume):
-            checkpoint = torch.load(args.resume, map_location=device)
+            checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
             if ('epoch' in checkpoint) and (args.resume_model_only == False):
                 # resuming a train checkpoint w/ epoch and optimizer state
                 start_epoch = checkpoint["epoch"]
                 sd = checkpoint["state_dict"]
                 if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
                     sd = {k[len('module.'):]: v for k, v in sd.items()}
-                model.load_state_dict(sd)
+                model.load_state_dict(sd, strict=False)
                 if optimizer is not None:
                     optimizer.load_state_dict(checkpoint["optimizer"])
                 if scaler is not None and 'scaler' in checkpoint:
@@ -258,7 +288,7 @@ def main():
         scheduler = scheduler_func(optimizer, args.lr, args.warmup, total_steps, restarts=3)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
-    args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
+    args.save_logs = args.log_dir and args.log_dir.lower() != 'none' and is_master(args)
     writer = None
     if args.save_logs and args.tensorboard:
         assert tensorboard is not None, "Please install tensorboard."
@@ -283,7 +313,7 @@ def main():
         logging.debug('Finished loading wandb.')
 
     trainer, evaluator = {
-        'PMC_CLIP': (train_one_epoch_mlm, evaluate),
+        'PMC_CLIP': (train_one_epoch_cls, evaluate),
     }.get(
         args.clip_model, (train_one_epoch, evaluate)
     )

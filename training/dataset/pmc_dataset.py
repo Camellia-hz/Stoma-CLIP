@@ -10,6 +10,19 @@ from transformers import AutoTokenizer
 
 from .utils import csv_loader, jsonl_loader, encode_mlm
 
+LABEL_MAP = {
+    "Irritant dermatitis":0,
+    "Allergic contact dermatitis":1,
+    "Mechanical injury":2,
+    "Folliculitis":3,
+    "Fungal infection":4,
+    "Skin hyperplasia":5,
+    "Parastomal varices": 6,
+    "Urate crystals": 7,
+    "Cancerous metastasis": 8,
+    "Pyoderma gangrenosum": 9,
+    "Normal": 10
+}
 
 class PmcDataset(Dataset):
     def __init__(self, args, input_filename, transforms, is_train):
@@ -21,12 +34,15 @@ class PmcDataset(Dataset):
             'csv': csv_loader,
             'jsonl': jsonl_loader,
         }[suffix]
-        self.images, self.captions = loader(
+        self.images, self.captions, self.labels = loader(
             input_filename=input_filename,
             img_key=args.csv_img_key,
             caption_key=args.csv_caption_key,
             sep=args.csv_separator
         )
+        
+        self.labels_index = [LABEL_MAP[label] for label in self.labels]
+        
         self.transforms = transforms
 
         if args.mlm:
@@ -50,6 +66,7 @@ class PmcDataset(Dataset):
             image_path = f'{self.args.image_dir}/{self.images[idx]}'
         images = self.transforms(Image.open(str(image_path)))
         caption = str(self.captions[idx])
+        label = LABEL_MAP[str(self.labels[idx])]
         
         if self.args.mlm:  # MLM task
             bert_input, bert_label = encode_mlm(
@@ -68,7 +85,8 @@ class PmcDataset(Dataset):
         output.update({
             "images": images,
             "bert_input": bert_input,
-            "bert_label": bert_label
+            "bert_label": bert_label,
+            "cls_label": label
         })
         return output
 

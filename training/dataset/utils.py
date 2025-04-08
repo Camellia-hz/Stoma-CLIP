@@ -14,12 +14,14 @@ def csv_loader(input_filename, img_key, caption_key, sep):
     return images, captions
 
 def jsonl_loader(input_filename, img_key, caption_key, sep):
-    images, captions = [], []
+    images, captions, labels = [], [], []
     with jsonlines.open(input_filename) as reader:
         for obj in reader:
             images.append(obj[img_key])
             captions.append(obj[caption_key])
-    return images, captions
+            labels.append(obj["label"])
+            
+    return images, captions, labels
 
 
 def base_masker(caption, vocab, mask_token='<MASK>', pad_token='<PAD>', ratio=0.15, *rest):

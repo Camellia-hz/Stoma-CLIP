@@ -53,6 +53,12 @@ def parse_args():
         help="Which type of dataset to process."
     )
     parser.add_argument(
+        "--image_dir",
+        type=str,
+        default=None,
+        help="data path."
+    )
+    parser.add_argument(
         "--dataset-resampled",
         default=False,
         action="store_true",
@@ -89,7 +95,7 @@ def parse_args():
         help="Path to imagenet v2 for conducting zero shot evaluation.",
     )
     parser.add_argument(
-        "--logs",
+        "--log_dir",
         type=str,
         default="./logs/",
         help="Where to store tensorboard logs. Use None to avoid storing logs.",
@@ -335,6 +341,12 @@ def parse_args():
         type=str,
         default="cosine",
         help="Choose LR Scheduler",
+    )
+    parser.add_argument(
+        "--fusion_method",
+        type=str,
+        default="concat",
+        help="fusion_method",
     )
     parser.add_argument(
         "--test-2000",

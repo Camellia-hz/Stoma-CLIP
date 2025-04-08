@@ -65,7 +65,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                 cumulative_mim_loss += mim_loss * batch_size
                 num_samples += batch_size
 
-                if is_master(args) and (i % 100) == 0:
+                if is_master(args) and (i % 10) == 0:
                     logging.info(
                         f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
                         f"Loss: {cumulative_total_loss / num_samples:.6f}\t")

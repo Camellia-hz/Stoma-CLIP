@@ -8,6 +8,7 @@ from contextlib import suppress
 import numpy as np
 import torch
 import torch.nn.functional as F
+from sklearn.utils.class_weight import compute_class_weight
 
 try:
     import wandb
@@ -149,6 +150,98 @@ def train_one_epoch_mlm(model, data, epoch, optimizer, scaler, scheduler, args, 
             batch_time_m.reset()
             data_time_m.reset()
     # end for
+    
+
+def train_one_epoch_cls(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
+    autocast = torch.cuda.amp.autocast if args.precision == 'amp' else suppress
+
+    model.train()
+
+    train_labels =  np.array(data['train'].dataloader.dataset.labels_index)
+
+    class_weights = torch.tensor(compute_class_weight(
+        class_weight='balanced',
+        classes=np.unique(train_labels),
+        y=train_labels
+    )).to(device=model.device, dtype=torch.float32)
+
+    loss_function = torch.nn.CrossEntropyLoss(weight=class_weights)
+    data['train'].set_epoch(epoch)  # set epoch in process safe manner via sampler or shared_epoch
+    dataloader = data['train'].dataloader
+    num_batches_per_epoch = dataloader.num_batches
+    sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
+
+    total_loss_m = AverageMeter()
+    batch_time_m = AverageMeter()
+    data_time_m = AverageMeter()
+    end = time.time()
+    for i, batch in enumerate(dataloader):
+        step = num_batches_per_epoch * epoch + i
+        scheduler(step)
+
+        data_time_m.update(time.time() - end)
+        optimizer.zero_grad()
+
+        with autocast():
+            labels = batch['cls_label'].to(model.device)
+            prediction = model(batch)
+            total_loss = loss_function(prediction, labels)
+
+        if scaler is not None:
+            scaler.scale(total_loss).backward()
+            if args.horovod:
+                optimizer.synchronize()
+                scaler.unscale_(optimizer)
+                with optimizer.skip_synchronize():
+                    scaler.step(optimizer)
+            else:
+                scaler.step(optimizer)
+            scaler.update()
+        else:
+            total_loss.backward()
+            optimizer.step()
+
+        # Note: we clamp to 4.6052 = ln(100), as in the original paper.
+        with torch.no_grad():
+            unwrap_model(model).logit_scale.clamp_(0, math.log(100))
+
+        batch_time_m.update(time.time() - end)
+        end = time.time()
+        batch_count = i + 1
+        if is_master(args) and (i % 100 == 0 or batch_count == num_batches_per_epoch):
+            batch_size = len(batch["images"])
+            num_samples = batch_count * batch_size * args.world_size
+            samples_per_epoch = dataloader.num_samples
+            percent_complete = 100.0 * batch_count / num_batches_per_epoch
+
+            # NOTE loss is coarsely sampled, just master node and per log update
+            total_loss_m.update(total_loss.item(), batch_size)
+            logging.info(
+                f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
+                f"Total Loss: {total_loss_m.val:#.5g} ({total_loss_m.avg:#.4g}) "
+                f"Data (t): {data_time_m.avg:.3f} "
+                f"Batch (t): {batch_time_m.avg:.3f} "
+                f"LR: {optimizer.param_groups[0]['lr']:5f} "
+            )
+
+            # Save train loss / etc. Using non avg meter values as loggers have their own smoothing
+            log_data = {
+                "total_loss": total_loss_m.val,
+                "data_time": data_time_m.val,
+                "batch_time": batch_time_m.val,
+                "lr": optimizer.param_groups[0]["lr"]
+            }
+            for name, val in log_data.items():
+                name = "train/" + name
+                if tb_writer is not None:
+                    tb_writer.add_scalar(name, val, step)
+                if args.wandb:
+                    assert wandb is not None, 'Please install wandb.'
+                    wandb.log({name: val, 'step': step})
+
+            # resetting batch / data time meters per log window
+            batch_time_m.reset()
+            data_time_m.reset()
 
 
 def train_one_epoch(*args, **kwargs):

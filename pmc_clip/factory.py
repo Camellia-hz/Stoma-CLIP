@@ -49,7 +49,7 @@ _rescan_model_configs()  # initial populate of model config registry
 
 
 def load_state_dict(checkpoint_path: str, map_location='cpu'):
-    checkpoint = torch.load(checkpoint_path, map_location=map_location)
+    checkpoint = torch.load(checkpoint_path, map_location=map_location, weights_only=False)
     if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
         state_dict = checkpoint['state_dict']
     else:
@@ -62,7 +62,7 @@ def load_state_dict(checkpoint_path: str, map_location='cpu'):
 def load_checkpoint(model, checkpoint_path, strict=True):
     state_dict = load_state_dict(checkpoint_path)
     resize_pos_embed(state_dict, model)
-    incompatible_keys = model.load_state_dict(state_dict, strict=strict)
+    incompatible_keys = model.load_state_dict(state_dict, strict=False)
     return incompatible_keys
 
 
@@ -119,16 +119,17 @@ def create_model(
         model = model_class(**model_cfg)
 
         if pretrained:
-            checkpoint_path = ''
-            url = get_pretrained_url(model_name, pretrained)
-            if url:
-                checkpoint_path = download_pretrained(url)
-            elif os.path.exists(pretrained):
-                checkpoint_path = pretrained
+            # checkpoint_path = ''
+            # url = get_pretrained_url(model_name, pretrained)
+            # if url:
+            #     checkpoint_path = download_pretrained(url)
+            # elif os.path.exists(pretrained):
+            # FIXME: dont use url ckpt
+            checkpoint_path = pretrained
 
             if checkpoint_path:
                 logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
-                load_checkpoint(model, checkpoint_path)
+                print(load_checkpoint(model, checkpoint_path))
             else:
                 logging.warning(f'Pretrained weights ({pretrained}) not found for model {model_name}.')
                 raise RuntimeError(f'Pretrained weights ({pretrained}) not found for model {model_name}.')

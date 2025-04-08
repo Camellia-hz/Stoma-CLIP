@@ -76,20 +76,20 @@ def image_transform(
             ToTensor(),
             normalize,
         ])
-        """MoCo's Augmentation
-        augmentation = Compose([
-            torchvision.transforms.RandomResizedCrop(image_size, scale=(crop_scale, 1.)),
-            torchvision.transforms.RandomApply([
-                torchvision.transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
-            ], p=0.8),
-            torchvision.transforms.RandomGrayscale(p=0.2),
-            torchvision.transforms.RandomApply([GaussianBlur([.1, 2.])], p=0.5),
-            torchvision.transforms.RandomHorizontalFlip(),
-            _convert_to_rgb,
-            torchvision.transforms.ToTensor(),
-            normalize
-        ])
-        """
+        # MoCo's Augmentation
+        # augmentation = Compose([
+        #     torchvision.transforms.RandomResizedCrop(image_size, scale=(crop_scale, 1.)),
+        #     torchvision.transforms.RandomApply([
+        #         torchvision.transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+        #     ], p=0.8),
+        #     # torchvision.transforms.RandomGrayscale(p=0.2),
+        #     torchvision.transforms.RandomApply([GaussianBlur([.1, 2.])], p=0.5),
+        #     torchvision.transforms.RandomHorizontalFlip(),
+        #     _convert_to_rgb,
+        #     torchvision.transforms.ToTensor(),
+        #     normalize
+        # ])
+        # return augmentation
     else:
         if resize_longest_max:
             transforms = [

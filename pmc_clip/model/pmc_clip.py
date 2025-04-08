@@ -88,7 +88,7 @@ class PMC_CLIP(nn.Module):
         if text_cfg.bert_model_name:
             # Tokenizer
             tokenizer_name = text_cfg.bert_model_name
-            assert text_cfg.bert_model_name == 'microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext', \
+            assert text_cfg.bert_model_name == '/mnt/csi-data-aly/user/haozhou/Projects/research/PMC-CLIP/microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext', \
                 "Please check [CLS]'s token id"
             self.cls_id = 2  # [CLS]'s token id is 2, while it varies from tokenizers
             self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)

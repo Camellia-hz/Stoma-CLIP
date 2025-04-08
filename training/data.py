@@ -406,7 +406,7 @@ def get_pmc_dataset(args, preprocess_fn, is_train, epoch=0):
         num_workers=args.workers,
         pin_memory=True,
         sampler=sampler,
-        drop_last=True,
+        drop_last=False,
         # drop_last=is_train,
     )
     dataloader.num_samples = num_samples
