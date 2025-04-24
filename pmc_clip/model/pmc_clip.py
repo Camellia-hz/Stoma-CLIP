@@ -165,6 +165,9 @@ class PMC_CLIP(nn.Module):
         )
         x = x['last_hidden_state']
         last_token_index = torch.nonzero( (encoded_input['input_ids'] == self.cls_id).squeeze() )
+        # 确保 last_token_index 的形状为 (batch_size, 2)
+        if last_token_index.dim() == 2 and last_token_index.shape[1] == 1:
+            last_token_index = last_token_index.expand(-1, 2)
         text_features = x[torch.arange(x.shape[0]), last_token_index[:, 1]]
         text_features = text_features @ self.text_projection  # NOTE for matching
         

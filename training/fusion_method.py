@@ -164,9 +164,9 @@ def convert_model_to_cls(model, num_classes=11, fusion_method='concat'):
         param.requires_grad = True
     
     # 检查模型
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            print(f"Trainable parameter: {name}")
+    # for name, param in model.named_parameters():
+    #     if param.requires_grad:
+    #         print(f"Trainable parameter: {name}")
     
     return model
 
